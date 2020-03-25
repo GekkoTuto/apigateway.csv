@@ -1,0 +1,178 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Create an API which deliver a csv file",
+  "Resources": {
+    "iamRoleLambda": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Description": "Lambda Role for CSV",
+        "Path": "/",
+        "RoleName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              "-api-csv"
+            ]
+          ]
+        }
+      }
+    },
+    "lambdaCSV": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "ZipFile": "import json\n\ndef lambda_handler(event, context):\n    return {\n        'statusCode': 200,\n        'headers':\n            {\n                'Content-Type': 'text/csv',\n                'Content-Disposition': 'attachment; filename=testting.csv'\n            },\n        'csv': {\n            'headers': 'year,month,day,company,model',\n            'lines': [\n                '1987,2,11,\"Airbus\",\"A320\"',\n                '1994,1,17,\"Airbus\",\"A330\"',\n                '2013,6,14,\"Aiburs\",\"A350\"',\n                '2005,4,27,\"Airbus\",\"A380\"',\n                '1997,11,16,\"Boeing\",\"777\"',\n                '1969,2,9,\"Boeing\",\"747\"',\n                '1967,4,9,\"Boeing\",\"737\"'\n            ]\n        }\n    }"
+        },
+        "Handler": "index.lambda_handler",
+        "Runtime": "python3.7",
+        "Role": {
+          "Fn::GetAtt": [
+            "iamRoleLambda",
+            "Arn"
+          ]
+        },
+        "FunctionName": "lambdaCSV"
+      }
+    },
+    "apiCSV": {
+      "Type": "AWS::ApiGateway::RestApi",
+      "Properties": {
+        "Name": "apiCSV",
+        "EndpointConfiguration": {
+          "Types": [
+            "REGIONAL"
+          ]
+        }
+      }
+    },
+    "rootCSV": {
+      "Type": "AWS::ApiGateway::Resource",
+      "Properties": {
+        "ParentId": {
+          "Fn::GetAtt": [
+            "apiCSV",
+            "RootResourceId"
+          ]
+        },
+        "PathPart": "csv",
+        "RestApiId": {
+          "Ref": "apiCSV"
+        }
+      }
+    },
+    "lambdaPermissions": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "FunctionName": {
+          "Fn::GetAtt": [
+            "lambdaCSV",
+            "Arn"
+          ]
+        },
+        "Principal": "apigateway.amazonaws.com"
+      }
+    },
+    "jsonModels": {
+      "Type": "AWS::ApiGateway::Model",
+      "Properties": {
+        "Name": "test",
+        "ContentType": "application/json",
+        "Description": "This is a standard JSON Model",
+        "RestApiId": {
+          "Ref": "apiCSV"
+        },
+        "Schema": {}
+      }
+    },
+    "csvGet": {
+      "DependsOn": "lambdaPermissions",
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "apiCSV"
+        },
+        "ResourceId": {
+          "Ref": "rootCSV"
+        },
+        "HttpMethod": "GET",
+        "AuthorizationType": "NONE",
+        "ApiKeyRequired": false,
+        "Integration": {
+          "Type": "AWS",
+          "IntegrationHttpMethod": "POST",
+          "Uri": {
+            "Fn::Join": [
+              "",
+              [
+                "arn:aws:apigateway:",
+                {
+                  "Ref": "AWS::Region"
+                },
+                ":lambda:path/2015-03-31/functions/",
+                {
+                  "Fn::GetAtt": [
+                    "lambdaCSV",
+                    "Arn"
+                  ]
+                },
+                "/invocations"
+              ]
+            ]
+          },
+          "IntegrationResponses": [
+            {
+              "StatusCode": "200",
+              "SelectionPattern": "",
+              "ResponseParameters": {
+                "method.response.header.Content-Disposition": "integration.response.body.headers.Content-Disposition"
+              },
+              "ResponseTemplates": {
+                "text/csv": "$input.path('$.csv.headers')\n#set($lines = $input.path('$.csv.lines'))\n#foreach($line in $lines)\n    $line\n#end"
+              }
+            }
+          ]
+        },
+        "MethodResponses": [
+          {
+            "StatusCode": 200,
+            "ResponseParameters": {
+              "method.response.header.Content-Disposition": false
+            },
+            "ResponseModels": {
+              "text/csv": "Empty"
+            }
+          },
+          {
+            "StatusCode": 300
+          }
+        ]
+      }
+    },
+    "deploymentAPI": {
+      "DependsOn": "csvGet",
+      "Type": "AWS::ApiGateway::Deployment",
+      "Properties": {
+        "RestApiId": {
+          "Ref": "apiCSV"
+        },
+        "StageName": "demo"
+      }
+    }
+  }
+}
